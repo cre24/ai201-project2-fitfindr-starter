@@ -97,6 +97,8 @@ Each tool handles failures independently and returns a descriptive string rather
 
 **What was harder than expected:** The empty wardrobe edge case for `suggest_outfit` required two distinct LLM prompts — one for a populated wardrobe referencing specific pieces by name, and one for an empty wardrobe giving general styling advice. A single prompt could not handle both cases well because the LLM would either hallucinate wardrobe pieces or give overly generic advice when pieces were available.
 
+**Stretch feature — Retry logic with fallback:** If `search_listings` returns no results on the first attempt, the agent automatically retries up to three more times with progressively loosened constraints — first dropping size, then dropping max price, then dropping both. If a retry succeeds, `session["search_note"]` is set to inform the user what was adjusted. If all four attempts return empty, the agent sets `session["error"]` and returns early. This logic lives entirely in `run_agent()` and required no changes to `search_listings` itself.
+
 ---
 
 ## AI Usage
@@ -108,3 +110,7 @@ I provided the tool spec for `compare_price` describing it as taking both `new_i
 **Instance 2 — `suggest_outfit` implementation**
 
 I provided the tool spec (inputs, outputs, error handling behavior, the Groq model to use) and the wardrobe schema from `data/wardrobe_schema.json` and asked Claude to implement the function. It produced a working implementation but used `item.get("title")` and `item.get("type")` to format wardrobe items — neither of which matched the actual schema keys (`name` and `category`). I identified this by printing `get_example_wardrobe()` to inspect the real structure, then corrected the field names to `item.get("name")` and `item.get("category")`. The fix caused the LLM to reference specific wardrobe pieces by name in its suggestions rather than falling back to the empty wardrobe path.
+
+**Instance 3 — Intent detection in the planning loop**
+
+I described the planning loop diagram showing the loop dispatching to any tool based on available inputs, and asked Claude to implement LLM-based intent detection so `run_agent()` could route to the correct tool based on the user's natural language query rather than always starting at `search_listings`. It produced a working implementation but the initial dispatch only checked intent without also checking session state, meaning direct dispatch via `session_state` would be bypassed if the intent classifier returned the wrong tool. I overrode this by keeping both checks — the intent-based dispatch and the session state check — so either path can trigger the correct tool independently.
