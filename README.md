@@ -47,7 +47,11 @@ When a user submits a query, the agent does not always start at the same tool. I
 
 The flow only travels downward. No tool re-prompts the user or re-fetches data from a previous step.
 
----
+## Known Limitations
+
+**Planning loop dispatch:** The agent is designed to dispatch to any tool directly based on available inputs, but in practice the Gradio UI always starts a new session with no pre-populated state. This means every interaction routes through `search_listings` first regardless of intent. For example, a query like "is $24 fair for a band tee?" is classified as `compare_price` by the intent detector, but since there is no `selected_item` in the session yet, the agent falls back to `search_listings` to find the item first.
+
+Direct dispatch to `suggest_outfit`, `compare_price`, or `create_fit_card` is supported in `run_agent()` via the `session_state` parameter and is tested in the CLI — but the Gradio UI does not currently expose input fields for pre-populating session state. Fully matching the planning loop diagram would require either additional UI input fields or a multi-turn conversation model where session state persists between queries.
 
 ## State Management
 
@@ -64,8 +68,6 @@ After each tool call, the output is stored in the session dict and passed explic
 | `session["error"]` | any failed step | triggers early return |
 
 The user's wardrobe is captured at the start of the session and held in memory for the duration of the interaction — it is never re-loaded between steps.
-
----
 
 ## Error Handling
 
@@ -87,8 +89,6 @@ Each tool handles failures independently and returns a descriptive string rather
 
 > Concrete example: patching `load_listings` to return `[]` via `unittest.mock.patch("tools.load_listings", return_value=[])` returned `"No dataset available to compare against. Try checking platforms like Depop, Poshmark, or eBay for similar listings."` and the rest of the session completed normally.
 
----
-
 ## Spec Reflection
 
 **What matched the spec:** The core flow matched closely — `search_listings` as the gatekeeper, `new_item = results[0]` set at the planning level, and `compare_price` as a non-blocking annotation that never gates downstream tools. The state management approach of storing each output in a named session key before passing it forward kept the tools fully decoupled.
@@ -98,8 +98,6 @@ Each tool handles failures independently and returns a descriptive string rather
 **What was harder than expected:** The empty wardrobe edge case for `suggest_outfit` required two distinct LLM prompts — one for a populated wardrobe referencing specific pieces by name, and one for an empty wardrobe giving general styling advice. A single prompt could not handle both cases well because the LLM would either hallucinate wardrobe pieces or give overly generic advice when pieces were available.
 
 **Stretch feature — Retry logic with fallback:** If `search_listings` returns no results on the first attempt, the agent automatically retries up to three more times with progressively loosened constraints — first dropping size, then dropping max price, then dropping both. If a retry succeeds, `session["search_note"]` is set to inform the user what was adjusted. If all four attempts return empty, the agent sets `session["error"]` and returns early. This logic lives entirely in `run_agent()` and required no changes to `search_listings` itself.
-
----
 
 ## AI Usage
 
