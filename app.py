@@ -20,7 +20,7 @@ from utils.data_loader import get_example_wardrobe, get_empty_wardrobe
 
 # ── query handler ─────────────────────────────────────────────────────────────
 
-def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str]:
+def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str, str]:
     """
     Called by Gradio when the user submits a query.
 
@@ -29,13 +29,13 @@ def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str]:
         wardrobe_choice: Either "Example wardrobe" or "Empty wardrobe (new user)".
 
     Returns:
-        A tuple of three strings:
-            (listing_text, outfit_suggestion, fit_card)
-        Each string maps to one of the three output panels in the UI.
+        A tuple of four strings:
+            (listing_text, price_check, outfit_suggestion, fit_card)
+        Each string maps to one of the four output panels in the UI.
     """
     # Step 1: Guard against empty query
     if not user_query or not user_query.strip():
-        return "Please enter a search query to get started.", "", ""
+        return "Please enter a search query to get started.", "", "", ""
 
     # Step 2: Select wardrobe based on choice
     wardrobe = (
@@ -49,23 +49,26 @@ def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str]:
 
     # Step 4: Return error in first panel if something went wrong
     if session["error"]:
-        return session["error"], "", ""
+        return session["error"], "", "", ""
 
     # Step 5: Format selected_item into a readable listing string
     item = session["selected_item"]
-    price_comparison = session.get("price_comparison", "")
+    price = item.get("price")
+    price_str = f"${price}" if isinstance(price, (int, float)) else "N/A"
 
     listing_text = (
         f"Title:      {item.get('title', 'N/A')}\n"
-        f"Price:      ${item.get('price', 'N/A')}\n"
+        f"Price:      {price_str}\n"
         f"Brand:      {item.get('brand') or 'Unbranded'}\n"
         f"Condition:  {item.get('condition', 'N/A')}\n"
     )
 
-    if price_comparison:
-        listing_text += f"\nPrice comparison:\n{price_comparison}"
+    if session.get("search_note"):
+        listing_text += f"\nNote: {session['search_note']}"
 
-    return listing_text, session["outfit_suggestion"], session["fit_card"]
+    price_check = session.get("price_comparison") or ""
+
+    return listing_text, price_check, session["outfit_suggestion"], session["fit_card"]
 
 
 # ── interface ─────────────────────────────────────────────────────────────────
@@ -102,12 +105,21 @@ Describe what you're looking for — include size and price if you want to filte
 
         submit_btn = gr.Button("Find it", variant="primary")
 
+        # Row 1 — the find and whether it's worth it.
         with gr.Row():
             listing_output = gr.Textbox(
                 label="🛍️ Top listing found",
                 lines=8,
                 interactive=False,
             )
+            price_output = gr.Textbox(
+                label="💰 Price check",
+                lines=8,
+                interactive=False,
+            )
+
+        # Row 2 — how to wear it.
+        with gr.Row():
             outfit_output = gr.Textbox(
                 label="👗 Outfit idea",
                 lines=8,
@@ -128,12 +140,12 @@ Describe what you're looking for — include size and price if you want to filte
         submit_btn.click(
             fn=handle_query,
             inputs=[query_input, wardrobe_choice],
-            outputs=[listing_output, outfit_output, fitcard_output],
+            outputs=[listing_output, price_output, outfit_output, fitcard_output],
         )
         query_input.submit(
             fn=handle_query,
             inputs=[query_input, wardrobe_choice],
-            outputs=[listing_output, outfit_output, fitcard_output],
+            outputs=[listing_output, price_output, outfit_output, fitcard_output],
         )
 
     return demo

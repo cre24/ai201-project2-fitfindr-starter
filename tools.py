@@ -1,16 +1,14 @@
 """
 tools.py
 
-The three required FitFindr tools. Each tool is a standalone function that
-can be called and tested independently before being wired into the agent loop.
-
-Complete and test each tool before moving to agent.py.
+The FitFindr tools. Each tool is a standalone function that can be called and
+tested independently, and is wired together by the planning loop in agent.py.
 
 Tools:
     search_listings(description, size, max_price)  → list[dict]
-    suggest_outfit(new_item, wardrobe)              → str
-    create_fit_card(outfit, new_item)               → str
-    compare_price(new_item, dataset)               -> str
+    suggest_outfit(new_item, wardrobe)             → str
+    create_fit_card(outfit, new_item)              → str
+    compare_price(new_item)                        → str
 """
 
 import os
@@ -26,19 +24,27 @@ load_dotenv()
 
 # ── Groq client ───────────────────────────────────────────────────────────────
 
-def _get_groq_client():
-    """Initialize and return a Groq client using GROQ_API_KEY from .env."""
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        raise ValueError(
-            "GROQ_API_KEY not set. Add it to a .env file in the project root."
-        )
-    return Groq(api_key=api_key)
+_client: Groq | None = None
+
+
+def _get_groq_client() -> Groq:
+    """Return a cached Groq client, created from GROQ_API_KEY on first use.
+
+    All tools route through this helper so client creation and the missing-key
+    error message stay in one place.
+    """
+    global _client
+    if _client is None:
+        api_key = os.environ.get("GROQ_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "GROQ_API_KEY not set. Add it to a .env file in the project root."
+            )
+        _client = Groq(api_key=api_key)
+    return _client
 
 
 # ── Tool 1: search_listings ───────────────────────────────────────────────────
-
-from utils.data_loader import load_listings
 
 def search_listings(
     description: str,
@@ -83,20 +89,11 @@ def search_listings(
                 and size_lower in item["size"].lower()
             ]
 
-        # Score each listing by keyword overlap with description
-        keywords = set(description.lower().split())
+        # Score each listing by weighted keyword overlap (see _score_listing,
+        # which weights title/style_tags/category/colors above free-text).
+        keywords = set(re.findall(r"[a-z0-9']+", description.lower()))
 
-        def score(item: dict) -> int:
-            searchable = " ".join([
-                item.get("title") or "",
-                item.get("brand") or "",
-                item.get("condition") or "",
-            ]).lower()
-            return sum(1 for keyword in keywords if keyword in searchable)
-
-        scored = [
-            (item, score(item)) for item in listings
-        ]
+        scored = [(item, _score_listing(item, keywords)) for item in listings]
 
         # Drop listings with no keyword matches
         scored = [(item, s) for item, s in scored if s > 0]
@@ -161,8 +158,6 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
         If the wardrobe is empty, offer general styling advice for the item
         rather than raising an exception or returning an empty string.
     """
-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
     item_description = (
         f"{new_item.get('title', 'clothing item')} "
         f"by {new_item.get('brand') or 'an unknown brand'}, "
@@ -194,6 +189,7 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
         )
 
     try:
+        client = _get_groq_client()
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
@@ -214,7 +210,7 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
         return response.choices[0].message.content or "Unable to suggest outfits at this time."
 
     except Exception as e:
-        print(f"Groq error: {e}")
+        print(f"Groq error in suggest_outfit: {e}")
         return "Unable to suggest outfits at this time."
 
 
@@ -236,8 +232,6 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
     if not outfit or not outfit.strip():
         return "Unable to create a caption — no outfit suggestion was provided. Please try again."
 
-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
     item_name = new_item.get("title", "a thrifted item")
     item_price = new_item.get("price", "unknown")
     item_brand = new_item.get("brand") or "a thrift find"
@@ -257,6 +251,7 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
     )
 
     try:
+        client = _get_groq_client()
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
@@ -279,6 +274,7 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
         return response.choices[0].message.content or "Unable to create a caption from the input provided. Please try again."
 
     except Exception as e:
+        print(f"Groq error in create_fit_card: {e}")
         return "Unable to create a caption from the input provided. Please try again."
     
 # ── Tool 4: compare_price ───────────────────────────────────────────────────
@@ -296,8 +292,6 @@ def compare_price(new_item: dict) -> str:
         If the dataset is empty, inform the user there is no data to compare
         the thrifted item to and suggest they check other sources.
     """
-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
     try:
         listings = load_listings()
     except Exception:
@@ -343,6 +337,7 @@ def compare_price(new_item: dict) -> str:
     )
 
     try:
+        client = _get_groq_client()
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
@@ -363,5 +358,6 @@ def compare_price(new_item: dict) -> str:
         )
         return response.choices[0].message.content or "Unable to make a comparison at this time. The flow will continue."
 
-    except Exception:
+    except Exception as e:
+        print(f"Groq error in compare_price: {e}")
         return "Unable to make a comparison at this time. The flow will continue."
